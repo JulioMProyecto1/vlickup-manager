@@ -2,8 +2,8 @@ import { type NextRequest, NextResponse } from "next/server"
 
 const CLICKUP_API_BASE = "https://api.clickup.com/api/v2"
 
-// Folder ID for "Tickets"
-const TICKETS_FOLDER_ID = "90020068902"
+// Space ID
+const SPACE_ID = "90020068902"
 
 // Allowed statuses
 const ALLOWED_STATUSES = ["stakeholder check", "in progress", "accepted"]
@@ -21,61 +21,100 @@ export async function GET(request: NextRequest) {
       "Content-Type": "application/json",
     }
 
-    // First, get all lists in the "Tickets" folder
-    const folderResponse = await fetch(`${CLICKUP_API_BASE}/folder/${TICKETS_FOLDER_ID}`, { headers })
-    
-    if (!folderResponse.ok) {
-      throw new Error(`Failed to fetch folder: ${folderResponse.statusText}`)
+    // Get all tasks from the space using POST query
+    const tasksResponse = await fetch(`${CLICKUP_API_BASE}/space/${SPACE_ID}/task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        archived: false,
+        page: 0,
+        order_by: "created",
+        reverse: false,
+        subtasks: true,
+        include_closed: true,
+        custom_fields: [
+          {
+            field_id: "615e4a7b-b1f2-4b91-bd3b-323c7951f9b1",
+            value: 5,
+          },
+        ],
+      }),
+    })
+
+    if (!tasksResponse.ok) {
+      throw new Error(`Failed to fetch tasks: ${tasksResponse.statusText}`)
     }
 
-    const folderData = await folderResponse.json()
-    const lists = folderData.lists || []
+    const tasksData = await tasksResponse.json()
+    const allTasks = tasksData.tasks || []
 
-    // Fetch tasks from all lists in the folder
+    // Filter tasks by allowed statuses
+    const filteredTasks = allTasks.filter((task: any) => ALLOWED_STATUSES.includes(task.status.status.toLowerCase()))
+
+    // Get unique list IDs to fetch list and folder information
+    const uniqueListIds = [...new Set(filteredTasks.map((task: any) => task.list.id))]
+
+    // Fetch list information to get folder names
+    const listInfoPromises = uniqueListIds.map(async (listId: string) => {
+      try {
+        const listResponse = await fetch(`${CLICKUP_API_BASE}/list/${listId}`, { headers })
+        if (listResponse.ok) {
+          const listData = await listResponse.json()
+          return {
+            listId,
+            listName: listData.name,
+            folderName: listData.folder?.name || "No Folder",
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching list info for ${listId}:`, error)
+      }
+      return {
+        listId,
+        listName: "Unknown List",
+        folderName: "Unknown Folder",
+      }
+    })
+
+    const listInfoResults = await Promise.all(listInfoPromises)
+    const listInfoMap = listInfoResults.reduce(
+      (acc, info) => {
+        acc[info.listId] = info
+        return acc
+      },
+      {} as Record<string, { listName: string; folderName: string }>,
+    )
+
+    // Group tasks by list_id and limit to 15 per list
     const tasksByList: Record<string, any[]> = {}
     const listNames: Record<string, string> = {}
 
-    for (const list of lists) {
-      try {
-        const response = await fetch(`${CLICKUP_API_BASE}/list/${list.id}/task?include_closed=false`, { headers })
+    filteredTasks.forEach((task: any) => {
+      const listId = task.list.id
 
-        if (!response.ok) {
-          console.error(`Failed to fetch tasks from list ${list.name}:`, response.statusText)
-          tasksByList[list.id] = []
-          continue
-        }
-
-        const data = await response.json()
-
-        // Filter tasks by allowed statuses and Team custom field value = 5
-        const filteredTasks = data.tasks
-          .filter((task: any) => {
-            // Check status
-            const hasValidStatus = ALLOWED_STATUSES.includes(task.status.status.toLowerCase())
-            
-            // Check Team custom field value = 5 (Automations team)
-            const teamField = task.custom_fields.find((field: any) => field.name.toLowerCase() === "team")
-            const isAutomationsTeam = teamField?.value === "5" || teamField?.value === 5
-            
-            return hasValidStatus && isAutomationsTeam
-          })
-          .slice(0, 15)
-          .map((task: any) => ({
-            ...task,
-            list: {
-              id: list.id,
-              name: list.name,
-            },
-          }))
-
-        tasksByList[list.id] = filteredTasks
-        listNames[list.id] = `${list.name} - Automations`
-      } catch (error) {
-        console.error(`Error fetching tasks from list ${list.name}:`, error)
-        tasksByList[list.id] = []
-        listNames[list.id] = `${list.name} - Automations`
+      if (!tasksByList[listId]) {
+        tasksByList[listId] = []
       }
-    }
+
+      // Limit to 15 tasks per list
+      if (tasksByList[listId].length < 15) {
+        tasksByList[listId].push({
+          ...task,
+          list: {
+            id: listId,
+            name: task.list.name,
+          },
+        })
+      }
+
+      // Set list display name
+      const listInfo = listInfoMap[listId]
+      if (listInfo) {
+        listNames[listId] = `${listInfo.listName} - ${listInfo.folderName}`
+      } else {
+        listNames[listId] = task.list.name
+      }
+    })
 
     return NextResponse.json({ tasksByList, listNames })
   } catch (error) {
