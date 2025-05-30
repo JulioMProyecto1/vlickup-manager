@@ -10,6 +10,9 @@ const LIST_IDS = {
   "From other teams": "your-from-other-teams-list-id",
 }
 
+// Allowed statuses
+const ALLOWED_STATUSES = ["stakeholder check", "in progress", "accepted"]
+
 export async function GET(request: NextRequest) {
   try {
     const token = process.env.CLICKUP_API_TOKEN
@@ -24,7 +27,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch tasks from all lists
-    const allTasks = []
+    const allTasksByList: Record<string, any[]> = {}
 
     for (const [listName, listId] of Object.entries(LIST_IDS)) {
       try {
@@ -32,27 +35,32 @@ export async function GET(request: NextRequest) {
 
         if (!response.ok) {
           console.error(`Failed to fetch tasks from ${listName}:`, response.statusText)
+          allTasksByList[listName] = []
           continue
         }
 
         const data = await response.json()
 
-        // Process tasks and add list information
-        const processedTasks = data.tasks.map((task: any) => ({
-          ...task,
-          list: {
-            id: listId,
-            name: listName,
-          },
-        }))
+        // Filter tasks by allowed statuses and limit to 15
+        const filteredTasks = data.tasks
+          .filter((task: any) => ALLOWED_STATUSES.includes(task.status.status.toLowerCase()))
+          .slice(0, 15)
+          .map((task: any) => ({
+            ...task,
+            list: {
+              id: listId,
+              name: listName,
+            },
+          }))
 
-        allTasks.push(...processedTasks)
+        allTasksByList[listName] = filteredTasks
       } catch (error) {
         console.error(`Error fetching tasks from ${listName}:`, error)
+        allTasksByList[listName] = []
       }
     }
 
-    return NextResponse.json({ tasks: allTasks })
+    return NextResponse.json({ tasksByList: allTasksByList })
   } catch (error) {
     console.error("Error fetching ClickUp tasks:", error)
     return NextResponse.json({ error: "Failed to fetch tasks" }, { status: 500 })

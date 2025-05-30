@@ -1,37 +1,43 @@
 import type { ClickUpTask, ProcessedTask } from "@/types/clickup"
 
-export function processClickUpTasks(tasks: ClickUpTask[]): ProcessedTask[] {
-  return tasks
-    .map((task) => {
-      // Find BV per hour custom field
-      const bvPerHourField = task.custom_fields.find((field) => field.name.toLowerCase() === "bv per hour")
-      const bvPerHour = bvPerHourField?.value ? Number.parseFloat(bvPerHourField.value) : 0
+export function processClickUpTasksByList(tasksByList: Record<string, ClickUpTask[]>): Record<string, ProcessedTask[]> {
+  const processedTasksByList: Record<string, ProcessedTask[]> = {}
 
-      // Find stakeholder custom field
-      const stakeholderField = task.custom_fields.find((field) => field.name.toLowerCase() === "stakeholder")
-      const stakeholder = stakeholderField?.value || "Unassigned"
+  for (const [listName, tasks] of Object.entries(tasksByList)) {
+    processedTasksByList[listName] = tasks
+      .map((task) => {
+        // Find BV per hour custom field
+        const bvPerHourField = task.custom_fields.find((field) => field.name.toLowerCase() === "bv per hour")
+        const bvPerHour = bvPerHourField?.value ? Math.round(Number.parseFloat(bvPerHourField.value)) : 0
 
-      // Find team custom field (for "From other teams" list)
-      const teamField = task.custom_fields.find((field) => field.name.toLowerCase() === "team")
-      const team = teamField?.value || ""
+        // Find stakeholder custom field
+        const stakeholderField = task.custom_fields.find((field) => field.name.toLowerCase() === "stakeholder")
+        const stakeholder = stakeholderField?.value || "Unassigned"
 
-      // Get assignee name
-      const assignee = task.assignees.length > 0 ? task.assignees[0].username : "Unassigned"
+        // Find team custom field (only for "From other teams" list)
+        const teamField = task.custom_fields.find((field) => field.name.toLowerCase() === "team")
+        const team = listName === "From other teams" ? teamField?.value || "" : undefined
 
-      return {
-        id: task.id,
-        name: task.name,
-        status: task.status.status,
-        assignee,
-        stakeholder,
-        team: task.list.name === "From other teams" ? team : undefined,
-        bvPerHour,
-        url: task.url,
-        timeEstimate: task.time_estimate,
-        listName: task.list.name,
-      }
-    })
-    .sort((a, b) => b.bvPerHour - a.bvPerHour) // Sort by BV per hour descending
+        // Get assignee name
+        const assignee = task.assignees.length > 0 ? task.assignees[0].username : "Unassigned"
+
+        return {
+          id: task.id,
+          name: task.name,
+          status: task.status.status,
+          assignee,
+          stakeholder,
+          team,
+          bvPerHour,
+          url: task.url,
+          timeEstimate: task.time_estimate,
+          listName: task.list.name,
+        }
+      })
+      .sort((a, b) => b.bvPerHour - a.bvPerHour) // Sort by BV per hour descending
+  }
+
+  return processedTasksByList
 }
 
 export function formatTaskForClipboard(task: ProcessedTask): string {

@@ -8,11 +8,11 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Copy, RefreshCw, AlertCircle } from "lucide-react"
 import type { ProcessedTask } from "@/types/clickup"
-import { processClickUpTasks, formatTaskForClipboard } from "@/lib/task-processor"
+import { processClickUpTasksByList, formatTaskForClipboard } from "@/lib/task-processor"
 import { useToast } from "@/hooks/use-toast"
 
 export default function ClickUpTaskExporter() {
-  const [tasks, setTasks] = useState<ProcessedTask[]>([])
+  const [tasksByList, setTasksByList] = useState<Record<string, ProcessedTask[]>>({})
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -30,8 +30,8 @@ export default function ClickUpTaskExporter() {
       }
 
       const data = await response.json()
-      const processedTasks = processClickUpTasks(data.tasks)
-      setTasks(processedTasks)
+      const processedTasksByList = processClickUpTasksByList(data.tasksByList)
+      setTasksByList(processedTasksByList)
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred")
     } finally {
@@ -53,16 +53,21 @@ export default function ClickUpTaskExporter() {
     setSelectedTasks(newSelected)
   }
 
-  const handleSelectAll = (checked: boolean) => {
+  const handleSelectAllForList = (listName: string, checked: boolean) => {
+    const newSelected = new Set(selectedTasks)
+    const listTasks = tasksByList[listName] || []
+
     if (checked) {
-      setSelectedTasks(new Set(tasks.map((task) => task.id)))
+      listTasks.forEach((task) => newSelected.add(task.id))
     } else {
-      setSelectedTasks(new Set())
+      listTasks.forEach((task) => newSelected.delete(task.id))
     }
+    setSelectedTasks(newSelected)
   }
 
   const copyTasksToClipboard = async () => {
-    const selectedTaskData = tasks.filter((task) => selectedTasks.has(task.id))
+    const allTasks = Object.values(tasksByList).flat()
+    const selectedTaskData = allTasks.filter((task) => selectedTasks.has(task.id))
     const formattedTasks = selectedTaskData.map(formatTaskForClipboard).join("\n")
 
     try {
@@ -82,13 +87,21 @@ export default function ClickUpTaskExporter() {
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
-      "to do": "bg-gray-500",
-      "in progress": "bg-blue-500",
-      review: "bg-yellow-500",
-      done: "bg-green-500",
-      blocked: "bg-red-500",
+      "stakeholder check": "bg-purple-500",
+      "in progress": "bg-yellow-600", // mustard color
+      accepted: "bg-cyan-500",
     }
     return colors[status.toLowerCase()] || "bg-gray-500"
+  }
+
+  const getSelectedCountForList = (listName: string) => {
+    const listTasks = tasksByList[listName] || []
+    return listTasks.filter((task) => selectedTasks.has(task.id)).length
+  }
+
+  const isAllSelectedForList = (listName: string) => {
+    const listTasks = tasksByList[listName] || []
+    return listTasks.length > 0 && listTasks.every((task) => selectedTasks.has(task.id))
   }
 
   if (loading) {
@@ -123,7 +136,8 @@ export default function ClickUpTaskExporter() {
   }
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto p-6 space-y-6">
+      {/* Header */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -143,72 +157,93 @@ export default function ClickUpTaskExporter() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">
-                    <Checkbox
-                      checked={selectedTasks.size === tasks.length && tasks.length > 0}
-                      onCheckedChange={handleSelectAll}
-                      aria-label="Select all tasks"
-                    />
-                  </TableHead>
-                  <TableHead>Task Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Assignee</TableHead>
-                  <TableHead>Stakeholder</TableHead>
-                  <TableHead>Team</TableHead>
-                  <TableHead>BV/Hour</TableHead>
-                  <TableHead>List</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tasks.map((task) => (
-                  <TableRow key={task.id}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selectedTasks.has(task.id)}
-                        onCheckedChange={(checked) => handleTaskSelection(task.id, checked as boolean)}
-                        aria-label={`Select ${task.name}`}
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <a
-                        href={task.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline text-blue-600"
-                      >
-                        {task.name}
-                      </a>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className={`${getStatusColor(task.status)} text-white`}>
-                        {task.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{task.assignee}</TableCell>
-                    <TableCell>{task.stakeholder}</TableCell>
-                    <TableCell>{task.team && <Badge variant="outline">{task.team}</Badge>}</TableCell>
-                    <TableCell className="font-mono">{task.bvPerHour.toFixed(2)}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{task.listName}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {tasks.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">
-              No tasks found. Make sure your ClickUp lists are configured correctly.
-            </div>
-          )}
-        </CardContent>
       </Card>
+
+      {/* Individual List Cards */}
+      {Object.entries(tasksByList).map(([listName, tasks]) => (
+        <Card key={listName}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">{listName}</CardTitle>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  {getSelectedCountForList(listName)} of {tasks.length} selected
+                </span>
+                <Checkbox
+                  checked={isAllSelectedForList(listName)}
+                  onCheckedChange={(checked) => handleSelectAllForList(listName, checked as boolean)}
+                  aria-label={`Select all tasks in ${listName}`}
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-12"></TableHead>
+                    <TableHead>Task Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Assignee</TableHead>
+                    <TableHead>Stakeholder</TableHead>
+                    {listName === "From other teams" && <TableHead>Team</TableHead>}
+                    <TableHead>BV/Hour</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tasks.map((task) => (
+                    <TableRow key={task.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedTasks.has(task.id)}
+                          onCheckedChange={(checked) => handleTaskSelection(task.id, checked as boolean)}
+                          aria-label={`Select ${task.name}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        <a
+                          href={task.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline text-blue-600"
+                        >
+                          {task.name}
+                        </a>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className={`${getStatusColor(task.status)} text-white`}>
+                          {task.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{task.assignee}</TableCell>
+                      <TableCell>{task.stakeholder}</TableCell>
+                      {listName === "From other teams" && (
+                        <TableCell>{task.team && <Badge variant="outline">{task.team}</Badge>}</TableCell>
+                      )}
+                      <TableCell className="font-mono">{task.bvPerHour}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {tasks.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground">
+                No tasks found for {listName}. Make sure your ClickUp list is configured correctly.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ))}
+
+      {Object.keys(tasksByList).length === 0 && (
+        <Card>
+          <CardContent className="text-center py-8 text-muted-foreground">
+            No lists found. Make sure your ClickUp lists are configured correctly.
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
