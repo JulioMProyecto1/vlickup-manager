@@ -6,13 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Copy, RefreshCw, AlertCircle } from "lucide-react"
+import { Copy, RefreshCw, AlertCircle } from 'lucide-react'
 import type { ProcessedTask } from "@/types/clickup"
 import { processClickUpTasksByList, formatTaskForClipboard } from "@/lib/task-processor"
 import { useToast } from "@/hooks/use-toast"
 
 export default function ClickUpTaskExporter() {
   const [tasksByList, setTasksByList] = useState<Record<string, ProcessedTask[]>>({})
+  const [listNames, setListNames] = useState<Record<string, string>>({})
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +33,7 @@ export default function ClickUpTaskExporter() {
       const data = await response.json()
       const processedTasksByList = processClickUpTasksByList(data.tasksByList)
       setTasksByList(processedTasksByList)
+      setListNames(data.listNames || {})
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred")
     } finally {
@@ -53,9 +55,9 @@ export default function ClickUpTaskExporter() {
     setSelectedTasks(newSelected)
   }
 
-  const handleSelectAllForList = (listName: string, checked: boolean) => {
+  const handleSelectAllForList = (listId: string, checked: boolean) => {
     const newSelected = new Set(selectedTasks)
-    const listTasks = tasksByList[listName] || []
+    const listTasks = tasksByList[listId] || []
 
     if (checked) {
       listTasks.forEach((task) => newSelected.add(task.id))
@@ -94,13 +96,13 @@ export default function ClickUpTaskExporter() {
     return colors[status.toLowerCase()] || "bg-gray-500"
   }
 
-  const getSelectedCountForList = (listName: string) => {
-    const listTasks = tasksByList[listName] || []
+  const getSelectedCountForList = (listId: string) => {
+    const listTasks = tasksByList[listId] || []
     return listTasks.filter((task) => selectedTasks.has(task.id)).length
   }
 
-  const isAllSelectedForList = (listName: string) => {
-    const listTasks = tasksByList[listName] || []
+  const isAllSelectedForList = (listId: string) => {
+    const listTasks = tasksByList[listId] || []
     return listTasks.length > 0 && listTasks.every((task) => selectedTasks.has(task.id))
   }
 
@@ -143,7 +145,7 @@ export default function ClickUpTaskExporter() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>ClickUp Task Exporter</CardTitle>
-              <CardDescription>Manage and export tasks from your ClickUp lists</CardDescription>
+              <CardDescription>Manage and export tasks from Automations team in Tickets folder</CardDescription>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={fetchTasks}>
@@ -160,19 +162,19 @@ export default function ClickUpTaskExporter() {
       </Card>
 
       {/* Individual List Cards */}
-      {Object.entries(tasksByList).map(([listName, tasks]) => (
-        <Card key={listName}>
+      {Object.entries(tasksByList).map(([listId, tasks]) => (
+        <Card key={listId}>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">{listName}</CardTitle>
+              <CardTitle className="text-lg">{listNames[listId] || `List ${listId}`}</CardTitle>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-muted-foreground">
-                  {getSelectedCountForList(listName)} of {tasks.length} selected
+                  {getSelectedCountForList(listId)} of {tasks.length} selected
                 </span>
                 <Checkbox
-                  checked={isAllSelectedForList(listName)}
-                  onCheckedChange={(checked) => handleSelectAllForList(listName, checked as boolean)}
-                  aria-label={`Select all tasks in ${listName}`}
+                  checked={isAllSelectedForList(listId)}
+                  onCheckedChange={(checked) => handleSelectAllForList(listId, checked as boolean)}
+                  aria-label={`Select all tasks in ${listNames[listId]}`}
                 />
               </div>
             </div>
@@ -187,7 +189,7 @@ export default function ClickUpTaskExporter() {
                     <TableHead>Status</TableHead>
                     <TableHead>Assignee</TableHead>
                     <TableHead>Stakeholder</TableHead>
-                    {listName === "From other teams" && <TableHead>Team</TableHead>}
+                    {tasks.some(task => task.team) && <TableHead>Team</TableHead>}
                     <TableHead>BV/Hour</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -206,7 +208,7 @@ export default function ClickUpTaskExporter() {
                           href={task.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="hover:underline text-blue-600"
+                          className="text-blue-600"
                         >
                           {task.name}
                         </a>
@@ -218,7 +220,7 @@ export default function ClickUpTaskExporter() {
                       </TableCell>
                       <TableCell>{task.assignee}</TableCell>
                       <TableCell>{task.stakeholder}</TableCell>
-                      {listName === "From other teams" && (
+                      {tasks.some(task => task.team) && (
                         <TableCell>{task.team && <Badge variant="outline">{task.team}</Badge>}</TableCell>
                       )}
                       <TableCell className="font-mono">{task.bvPerHour}</TableCell>
@@ -230,7 +232,7 @@ export default function ClickUpTaskExporter() {
 
             {tasks.length === 0 && (
               <div className="text-center py-8 text-muted-foreground">
-                No tasks found for {listName}. Make sure your ClickUp list is configured correctly.
+                No tasks found for {listNames[listId]}. Make sure your ClickUp list is configured correctly.
               </div>
             )}
           </CardContent>

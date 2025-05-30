@@ -3,8 +3,8 @@ import type { ClickUpTask, ProcessedTask } from "@/types/clickup"
 export function processClickUpTasksByList(tasksByList: Record<string, ClickUpTask[]>): Record<string, ProcessedTask[]> {
   const processedTasksByList: Record<string, ProcessedTask[]> = {}
 
-  for (const [listName, tasks] of Object.entries(tasksByList)) {
-    processedTasksByList[listName] = tasks
+  for (const [listId, tasks] of Object.entries(tasksByList)) {
+    processedTasksByList[listId] = tasks
       .map((task) => {
         // Find BV per hour custom field
         const bvPerHourField = task.custom_fields.find((field) => field.name.toLowerCase() === "bv per hour")
@@ -16,7 +16,7 @@ export function processClickUpTasksByList(tasksByList: Record<string, ClickUpTas
 
         // Find team custom field (only for "From other teams" list)
         const teamField = task.custom_fields.find((field) => field.name.toLowerCase() === "team")
-        const team = listName === "From other teams" ? teamField?.value || "" : undefined
+        const team = task.list.name.toLowerCase().includes("other teams") ? teamField?.value || "" : undefined
 
         // Get assignee name
         const assignee = task.assignees.length > 0 ? task.assignees[0].username : "Unassigned"
