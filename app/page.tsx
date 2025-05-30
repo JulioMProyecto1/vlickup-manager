@@ -6,17 +6,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Copy, RefreshCw, AlertCircle } from 'lucide-react'
+import { Label } from "@/components/ui/label"
+import { Copy, RefreshCw, AlertCircle, Settings } from "lucide-react"
 import type { ProcessedTask } from "@/types/clickup"
 import { processClickUpTasksByList, formatTaskForClipboard } from "@/lib/task-processor"
 import { useToast } from "@/hooks/use-toast"
+
+// Default list IDs - you can modify these or make them configurable
+const DEFAULT_LIST_IDS = [
+  "your-request-list-id",
+  "your-support-list-id",
+  "your-kleinscheiss-list-id",
+  "your-from-other-teams-list-id",
+]
 
 export default function ClickUpTaskExporter() {
   const [tasksByList, setTasksByList] = useState<Record<string, ProcessedTask[]>>({})
   const [listNames, setListNames] = useState<Record<string, string>>({})
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [listIds, setListIds] = useState<string[]>(DEFAULT_LIST_IDS)
+  const [listIdsInput, setListIdsInput] = useState<string>(JSON.stringify(DEFAULT_LIST_IDS, null, 2))
+  const [showSettings, setShowSettings] = useState(false)
   const { toast } = useToast()
 
   const fetchTasks = async () => {
@@ -24,7 +36,8 @@ export default function ClickUpTaskExporter() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch("/api/clickup/tasks")
+      const listIdsParam = encodeURIComponent(JSON.stringify(listIds))
+      const response = await fetch(`/api/clickup/tasks?listIds=${listIdsParam}`)
 
       if (!response.ok) {
         throw new Error("Failed to fetch tasks")
@@ -42,8 +55,10 @@ export default function ClickUpTaskExporter() {
   }
 
   useEffect(() => {
-    fetchTasks()
-  }, [])
+    if (listIds.length > 0) {
+      fetchTasks()
+    }
+  }, [listIds])
 
   const handleTaskSelection = (taskId: string, checked: boolean) => {
     const newSelected = new Set(selectedTasks)
@@ -82,6 +97,28 @@ export default function ClickUpTaskExporter() {
       toast({
         title: "Copy failed",
         description: "Failed to copy tasks to clipboard",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateListIds = () => {
+    try {
+      const newListIds = JSON.parse(listIdsInput)
+      if (Array.isArray(newListIds)) {
+        setListIds(newListIds)
+        setShowSettings(false)
+        toast({
+          title: "List IDs updated!",
+          description: "Fetching tasks from new lists...",
+        })
+      } else {
+        throw new Error("Must be an array")
+      }
+    } catch (err) {
+      toast({
+        title: "Invalid format",
+        description: "Please enter a valid JSON array of list IDs",
         variant: "destructive",
       })
     }
@@ -145,9 +182,13 @@ export default function ClickUpTaskExporter() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>ClickUp Task Exporter</CardTitle>
-              <CardDescription>Manage and export tasks from Automations team in Tickets folder</CardDescription>
+              <CardDescription>Manage and export tasks from Automations team</CardDescription>
             </div>
             <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowSettings(!showSettings)}>
+                <Settings className="h-4 w-4 mr-2" />
+                Configure Lists
+              </Button>
               <Button variant="outline" onClick={fetchTasks}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
@@ -159,6 +200,27 @@ export default function ClickUpTaskExporter() {
             </div>
           </div>
         </CardHeader>
+
+        {showSettings && (
+          <CardContent>
+            <div className="space-y-4">
+              <Label htmlFor="listIds">List IDs (JSON Array)</Label>
+              <textarea
+                id="listIds"
+                value={listIdsInput}
+                onChange={(e) => setListIdsInput(e.target.value)}
+                className="w-full h-32 p-2 border rounded-md font-mono text-sm"
+                placeholder='["list-id-1", "list-id-2", "list-id-3"]'
+              />
+              <div className="flex gap-2">
+                <Button onClick={handleUpdateListIds}>Update Lists</Button>
+                <Button variant="outline" onClick={() => setShowSettings(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       {/* Individual List Cards */}
@@ -189,7 +251,7 @@ export default function ClickUpTaskExporter() {
                     <TableHead>Status</TableHead>
                     <TableHead>Assignee</TableHead>
                     <TableHead>Stakeholder</TableHead>
-                    {tasks.some(task => task.team) && <TableHead>Team</TableHead>}
+                    {tasks.some((task) => task.team) && <TableHead>Team</TableHead>}
                     <TableHead>BV/Hour</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -204,12 +266,7 @@ export default function ClickUpTaskExporter() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">
-                        <a
-                          href={task.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600"
-                        >
+                        <a href={task.url} target="_blank" rel="noopener noreferrer" className="text-blue-600">
                           {task.name}
                         </a>
                       </TableCell>
@@ -220,7 +277,7 @@ export default function ClickUpTaskExporter() {
                       </TableCell>
                       <TableCell>{task.assignee}</TableCell>
                       <TableCell>{task.stakeholder}</TableCell>
-                      {tasks.some(task => task.team) && (
+                      {tasks.some((task) => task.team) && (
                         <TableCell>{task.team && <Badge variant="outline">{task.team}</Badge>}</TableCell>
                       )}
                       <TableCell className="font-mono">{task.bvPerHour}</TableCell>
@@ -242,7 +299,7 @@ export default function ClickUpTaskExporter() {
       {Object.keys(tasksByList).length === 0 && (
         <Card>
           <CardContent className="text-center py-8 text-muted-foreground">
-            No lists found. Make sure your ClickUp lists are configured correctly.
+            No lists configured. Click "Configure Lists" to add your ClickUp list IDs.
           </CardContent>
         </Card>
       )}

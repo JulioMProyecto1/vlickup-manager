@@ -2,9 +2,6 @@ import { type NextRequest, NextResponse } from "next/server"
 
 const CLICKUP_API_BASE = "https://api.clickup.com/api/v2"
 
-// Space ID
-const SPACE_ID = "90020068902"
-
 // Allowed statuses
 const ALLOWED_STATUSES = ["stakeholder check", "in progress", "accepted"]
 
@@ -21,100 +18,83 @@ export async function GET(request: NextRequest) {
       "Content-Type": "application/json",
     }
 
-    // Get all tasks from the space using POST query
-    const tasksResponse = await fetch(`${CLICKUP_API_BASE}/space/${SPACE_ID}/task`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        archived: false,
-        page: 0,
-        order_by: "created",
-        reverse: false,
-        subtasks: true,
-        include_closed: true,
-        custom_fields: [
-          {
-            field_id: "615e4a7b-b1f2-4b91-bd3b-323c7951f9b1",
-            value: 5,
-          },
-        ],
-      }),
-    })
+    // Get listIds from query parameters
+    const { searchParams } = new URL(request.url)
+    const listIdsParam = searchParams.get("listIds")
 
-    if (!tasksResponse.ok) {
-      throw new Error(`Failed to fetch tasks: ${tasksResponse.statusText}`)
+    if (!listIdsParam) {
+      return NextResponse.json({ error: "listIds parameter is required" }, { status: 400 })
     }
 
-    const tasksData = await tasksResponse.json()
-    const allTasks = tasksData.tasks || []
+    let listIds: string[]
+    try {
+      listIds = JSON.parse(listIdsParam)
+    } catch {
+      return NextResponse.json({ error: "Invalid listIds format. Expected JSON array." }, { status: 400 })
+    }
 
-    // Filter tasks by allowed statuses
-    const filteredTasks = allTasks.filter((task: any) => ALLOWED_STATUSES.includes(task.status.status.toLowerCase()))
-
-    // Get unique list IDs to fetch list and folder information
-    const uniqueListIds = [...new Set(filteredTasks.map((task: any) => task.list.id))]
-
-    // Fetch list information to get folder names
-    const listInfoPromises = uniqueListIds.map(async (listId: string) => {
-      try {
-        const listResponse = await fetch(`${CLICKUP_API_BASE}/list/${listId}`, { headers })
-        if (listResponse.ok) {
-          const listData = await listResponse.json()
-          return {
-            listId,
-            listName: listData.name,
-            folderName: listData.folder?.name || "No Folder",
-          }
-        }
-      } catch (error) {
-        console.error(`Error fetching list info for ${listId}:`, error)
-      }
-      return {
-        listId,
-        listName: "Unknown List",
-        folderName: "Unknown Folder",
-      }
-    })
-
-    const listInfoResults = await Promise.all(listInfoPromises)
-    const listInfoMap = listInfoResults.reduce(
-      (acc, info) => {
-        acc[info.listId] = info
-        return acc
-      },
-      {} as Record<string, { listName: string; folderName: string }>,
-    )
-
-    // Group tasks by list_id and limit to 15 per list
+    // Fetch tasks from each list
     const tasksByList: Record<string, any[]> = {}
     const listNames: Record<string, string> = {}
 
-    filteredTasks.forEach((task: any) => {
-      const listId = task.list.id
+    for (const listId of listIds) {
+      try {
+        // First get list info to get list name and folder name
+        const listInfoResponse = await fetch(`${CLICKUP_API_BASE}/list/${listId}`, { headers })
 
-      if (!tasksByList[listId]) {
+        let listName = "Unknown List"
+        let folderName = "Unknown Folder"
+
+        if (listInfoResponse.ok) {
+          const listInfo = await listInfoResponse.json()
+          listName = listInfo.name
+          folderName = listInfo.folder?.name || "No Folder"
+        }
+
+        // Build the custom fields query parameter
+        const customFieldsQuery = encodeURIComponent(
+          JSON.stringify([
+            {
+              field_id: "615e4a7b-b1f2-4b91-bd3b-323c7951f9b1",
+              operator: "=",
+              value: "5",
+            },
+          ]),
+        )
+
+        // Fetch tasks with custom field filter
+        const tasksUrl = `${CLICKUP_API_BASE}/list/${listId}/task?custom_fields=${customFieldsQuery}&include_closed=false`
+        const tasksResponse = await fetch(tasksUrl, { headers })
+
+        if (!tasksResponse.ok) {
+          console.error(`Failed to fetch tasks from list ${listId}:`, tasksResponse.statusText)
+          tasksByList[listId] = []
+          listNames[listId] = `${listName} - ${folderName}`
+          continue
+        }
+
+        const tasksData = await tasksResponse.json()
+
+        // Filter tasks by allowed statuses and limit to 15
+        const filteredTasks = tasksData.tasks
+          .filter((task: any) => ALLOWED_STATUSES.includes(task.status.status.toLowerCase()))
+          .slice(0, 15)
+          .map((task: any) => ({
+            ...task,
+            list: {
+              id: listId,
+              name: listName,
+            },
+          }))
+
+        tasksByList[listId] = filteredTasks
+        listNames[listId] = `${listName} - ${folderName}`
+      } catch (error) {
+        console.error(`Error fetching tasks from list ${listId}:`, error)
         tasksByList[listId] = []
+        listNames[listId] = `List ${listId} - Error`
       }
-
-      // Limit to 15 tasks per list
-      if (tasksByList[listId].length < 15) {
-        tasksByList[listId].push({
-          ...task,
-          list: {
-            id: listId,
-            name: task.list.name,
-          },
-        })
-      }
-
-      // Set list display name
-      const listInfo = listInfoMap[listId]
-      if (listInfo) {
-        listNames[listId] = `${listInfo.listName} - ${listInfo.folderName}`
-      } else {
-        listNames[listId] = task.list.name
-      }
-    })
+    }
 
     return NextResponse.json({ tasksByList, listNames })
   } catch (error) {
